@@ -605,6 +605,7 @@ TEST_F(PipelineThreadedIntegration, StatsAccumulateCorrectly) {
 
     EXPECT_CALL(*camera, open()).WillOnce(Return(true));
     EXPECT_CALL(*camera, close()).Times(1);
+    EXPECT_CALL(*camera, is_open()).WillRepeatedly(Return(true));
     ON_CALL(*camera, grab_frame()).WillByDefault(
         Invoke([&]() -> Frame {
             int count = frame_count.fetch_add(1);
@@ -914,6 +915,7 @@ TEST_F(StrictIntegration, StoreReceivesCorrectVerdict) {
     std::atomic<int> frame_count{0};
     EXPECT_CALL(*camera, open()).WillOnce(Return(true));
     EXPECT_CALL(*camera, close()).Times(1);
+    EXPECT_CALL(*camera, is_open()).WillRepeatedly(Return(true));
     ON_CALL(*camera, grab_frame()).WillByDefault(
         Invoke([&]() -> Frame {
             int count = frame_count.fetch_add(1);

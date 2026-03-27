@@ -1,17 +1,10 @@
-# EdgeAI Paint Can Defect Dataset Configuration
-# Used by YOLOv8 training pipeline
-
-path: data/synthetic          # Dataset root directory
-train: train/images           # Train images (relative to path)
-val: val/images               # Validation images (relative to path)
-
-# Number of defect classes
-nc: 5
-
-# Class names (order must match class IDs 0-4)
 names:
   0: dent
   1: wrong_label
   2: missing_label
   3: seal_defect
   4: color_mismatch
+nc: 5
+path: /home/arif-khan/Development/edgeAI/data/synthetic_dataset
+train: images/train
+val: images/val

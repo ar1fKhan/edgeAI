@@ -24,13 +24,18 @@ __pycache__/
 venv/
 *.egg
 
-# Data
-data/
-models/*.onnx
+# Data - but keep synthetic dataset, test images/videos, and ONNX model
+data/captures/
+!data/
+!data/test_images/
+!data/test_videos/
+!data/synthetic_dataset/
+!models/defect_detector.onnx
 models/*.pt
 *.db
 
 # Training runs
+runs/
 python/train/runs/
 
 # Logs

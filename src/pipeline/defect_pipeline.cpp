@@ -165,13 +165,6 @@ void DefectPipeline::capture_loop() {
 
     while (running_.load()) {
         try {
-            // Exit if camera was closed (e.g. end of video file)
-            if (!camera_->is_open()) {
-                LOG_INFO("Pipeline", "Camera closed — stopping capture loop");
-                running_.store(false);
-                break;
-            }
-
             auto frame = camera_->grab_frame();
             if (!frame.is_valid()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
