@@ -1,0 +1,41 @@
+# Build
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+
+# Compiled
+*.o
+*.a
+*.so
+*.dylib
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Data
+data/
+models/*.onnx
+models/*.pt
+*.db
+
+# Training runs
+python/train/runs/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

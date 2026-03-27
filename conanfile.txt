@@ -1,0 +1,12 @@
+[requires]
+opencv/4.8.1
+sqlite3/3.44.2
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[options]
+opencv/*:with_ffmpeg=False
+opencv/*:with_gtk=False
+opencv/*:with_v4l=True

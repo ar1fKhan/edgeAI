@@ -1,0 +1,64 @@
+# ── Stage 1: Build C++ Inference Engine ─────────────────────────
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    cmake build-essential g++ \
+    libopencv-dev libsqlite3-dev \
+    wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ONNX Runtime
+ARG ONNXRT_VERSION=1.16.3
+RUN wget -q https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRT_VERSION}/onnxruntime-linux-x64-${ONNXRT_VERSION}.tgz \
+    && tar -xzf onnxruntime-linux-x64-${ONNXRT_VERSION}.tgz \
+    && cp -r onnxruntime-linux-x64-${ONNXRT_VERSION}/include/* /usr/local/include/ \
+    && cp -r onnxruntime-linux-x64-${ONNXRT_VERSION}/lib/* /usr/local/lib/ \
+    && ldconfig \
+    && rm -rf onnxruntime-*
+
+WORKDIR /app
+COPY CMakeLists.txt .
+COPY include/ include/
+COPY src/ src/
+
+RUN mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=OFF \
+    && make -j$(nproc)
+
+# ── Stage 2: Runtime Image ─────────────────────────────────────
+FROM ubuntu:22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    libopencv-core4.5d libopencv-imgproc4.5d \
+    libopencv-imgcodecs4.5d libopencv-videoio4.5d \
+    libopencv-highgui4.5d \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy ONNX Runtime libs
+COPY --from=builder /usr/local/lib/libonnxruntime* /usr/local/lib/
+RUN ldconfig
+
+# Copy built binary
+COPY --from=builder /app/build/bin/edge_inspector /usr/local/bin/
+COPY --from=builder /app/build/bin/benchmark_inference /usr/local/bin/
+
+# Copy configs and models
+COPY configs/ /etc/edgeai/
+COPY models/ /opt/edgeai/models/
+
+# Create data directory
+RUN mkdir -p /var/lib/edgeai/defects
+
+# Set defaults
+ENV EDGEAI_CONFIG=/etc/edgeai/inference.cfg
+ENV EDGEAI_DB=/var/lib/edgeai/defects.db
+
+WORKDIR /opt/edgeai
+
+ENTRYPOINT ["edge_inspector"]
+CMD ["--config", "/etc/edgeai/inference.cfg"]

@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  # ── C++ Inference Engine ──────────────────────────────────────
+  inference:
+    build:
+      context: .
+      dockerfile: Dockerfile.inference
+    container_name: edgeai-inference
+    restart: unless-stopped
+    privileged: true          # Required for camera & GPIO access
+    devices:
+      - /dev/video0:/dev/video0   # Camera device
+    volumes:
+      - edgeai-data:/var/lib/edgeai
+      - ./models:/opt/edgeai/models:ro
+      - ./configs:/etc/edgeai:ro
+    environment:
+      - EDGEAI_CONFIG=/etc/edgeai/inference.cfg
+    networks:
+      - edgeai-net
+
+  # ── Dashboard (Python/Flask) ─────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: edgeai-dashboard
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - edgeai-data:/var/lib/edgeai:ro
+    depends_on:
+      - inference
+    networks:
+      - edgeai-net
+
+volumes:
+  edgeai-data:
+    driver: local
+
+networks:
+  edgeai-net:
+    driver: bridge

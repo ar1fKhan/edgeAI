@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY python/requirements.txt requirements.txt
+RUN pip install --no-cache-dir flask flask-cors
+
+COPY python/dashboard/ dashboard/
+
+# Data volume mount point
+RUN mkdir -p /var/lib/edgeai
+
+ENV EDGEAI_DB=/var/lib/edgeai/defects.db
+ENV EDGEAI_IMAGES=/var/lib/edgeai/defects
+
+EXPOSE 5000
+
+CMD ["python", "dashboard/app.py", \
+     "--db", "/var/lib/edgeai/defects.db", \
+     "--images", "/var/lib/edgeai/defects", \
+     "--port", "5000"]

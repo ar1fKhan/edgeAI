@@ -1,0 +1,25 @@
+# EdgeAI Python Dependencies
+
+# ── Model Training ──────────────────────────────────
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.0.0          # YOLOv8
+onnx>=1.14.0
+onnxruntime>=1.16.0
+
+# ── Data Processing ─────────────────────────────────
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+albumentations>=1.3.0       # Data augmentation
+scikit-learn>=1.3.0
+
+# ── Dashboard ───────────────────────────────────────
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# ── Utilities ───────────────────────────────────────
+pyyaml>=6.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+pandas>=2.0.0
