@@ -102,25 +102,25 @@ def create_labels(img_path, has_defect, defect_class):
         # No defects - empty label file
         label_path.touch()
 
-# Generate synthetic dataset (20 images for speed)
-print("  Creating 20 training images...")
-for i in range(20):
-    if i < 10:
-        # Clean images
+# Generate synthetic dataset (100 images for better training)
+print("  Creating 80 training images...")
+for i in range(80):
+    if i < 40:
+        # Clean images (50% of training set)
         img = create_synthetic_image(with_defect=False)
         img_path = TRAIN_IMAGES / f"clean_{i:03d}.jpg"
         img.save(img_path)
         create_labels(img_path, False, 0)
     else:
-        # Defective images
-        defect_class = i % 5
+        # Defective images (50% of training set)
+        defect_class = (i - 40) % 5
         img = create_synthetic_image(with_defect=True, defect_class=defect_class)
         img_path = TRAIN_IMAGES / f"defect_{i:03d}.jpg"
         img.save(img_path)
         create_labels(img_path, True, defect_class)
 
-print("  Creating 5 validation images...")
-for i in range(5):
+print("  Creating 20 validation images...")
+for i in range(20):
     img = create_synthetic_image(with_defect=(i % 2 == 0))
     img_path = VAL_IMAGES / f"val_{i:03d}.jpg"
     img.save(img_path)
@@ -155,11 +155,11 @@ try:
     
     results = model.train(
         data=str(CONFIGS_DIR / "dataset.yaml"),
-        epochs=3,  # Quick training
+        epochs=15,  # More training for better model
         imgsz=640,
-        batch=4,
+        batch=8,
         device=0 if torch.cuda.is_available() else 'cpu',
-        patience=1,
+        patience=3,
         verbose=False
     )
     

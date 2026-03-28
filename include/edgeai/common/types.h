@@ -218,9 +218,9 @@ struct InferenceConfig {
     int         input_width     = 640;
     int         input_height    = 640;
     int         num_classes     = 5;
-    float       conf_threshold  = 0.5f;
-    float       nms_threshold   = 0.45f;
-    float       review_threshold = 0.3f; // below conf but above this → review
+    float       conf_threshold  = 0.98f;   // 98% confidence - high threshold for undertrained synthetic model
+    float       nms_threshold   = 0.15f;   // Very strict NMS
+    float       review_threshold = 0.95f;  // 95% for manual review
     int         num_threads     = 4;
     bool        use_gpu         = false;
     int         gpu_device_id   = 0;
