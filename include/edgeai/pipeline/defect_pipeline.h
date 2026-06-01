@@ -24,9 +24,11 @@
  */
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 // ── Interfaces (depend only on these — not concrete types) ─────
@@ -125,6 +127,16 @@ private:
     FrameQueue                          frame_queue_;
     std::thread                         capture_thread_;
     std::thread                         inference_thread_;
+    std::thread                         display_thread_;
+    std::thread                         watchdog_thread_;
+
+    // ── Display slot (latest annotated frame for display thread) ──
+    std::mutex                          display_mutex_;
+    std::condition_variable             display_cv_;
+    std::optional<cv::Mat>              display_frame_;
+
+    // ── Watchdog heartbeat ─────────────────────────────────────
+    std::atomic<int64_t>                last_inference_ms_{0};
 
     // ── Stats (guarded by stats_mutex_) ────────────────────────
     mutable std::mutex                  stats_mutex_;
@@ -137,6 +149,8 @@ private:
     // Thread functions
     void capture_loop();
     void inference_loop();
+    void display_loop();
+    void watchdog_loop();
 
     // Helpers
     void handle_result(const InspectionResult& result, const cv::Mat& image);

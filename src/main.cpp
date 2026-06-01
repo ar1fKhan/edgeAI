@@ -54,6 +54,7 @@ struct CliArgs {
     std::string model_path   = "models/defect_detector.onnx";
     std::string image_path   = "";        // single-image mode
     std::string video_path   = "";        // video file debug mode
+    std::string log_path     = "edgeai.log";
     int         camera_id    = 0;
     bool        display      = false;
     bool        verbose      = false;
@@ -67,9 +68,20 @@ CliArgs parse_args(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--config" && i + 1 < argc)     args.config_path = argv[++i];
         else if (arg == "--model" && i + 1 < argc)  args.model_path = argv[++i];
-        else if (arg == "--camera" && i + 1 < argc)  args.camera_id = std::stoi(argv[++i]);
+        else if (arg == "--camera" && i + 1 < argc) {
+            try {
+                int id = std::stoi(argv[++i]);
+                if (id < 0 || id > 255) throw std::out_of_range("camera id out of range [0,255]");
+                args.camera_id = id;
+            } catch (const std::exception& e) {
+                std::cerr << "Error: invalid --camera value '" << argv[i]
+                          << "' (" << e.what() << ")\n";
+                args.help = true;
+            }
+        }
         else if (arg == "--video" && i + 1 < argc)   args.video_path = argv[++i];
         else if (arg == "--image" && i + 1 < argc)   args.image_path = argv[++i];
+        else if (arg == "--log"   && i + 1 < argc)   args.log_path = argv[++i];
         else if (arg == "--loop")                     args.loop_video = true;
         else if (arg == "--display")                  args.display = true;
         else if (arg == "--verbose" || arg == "-v")   args.verbose = true;
@@ -301,7 +313,7 @@ int main(int argc, char* argv[]) {
     if (args.verbose) {
         edgeai::Logger::instance().set_level(edgeai::LogLevel::DEBUG);
     }
-    edgeai::Logger::instance().set_file("edgeai.log");
+    edgeai::Logger::instance().set_file(args.log_path);
 
     LOG_INFO("Main", "EdgeAI Paint Can Defect Inspector v1.0.0");
     LOG_INFO("Main", "All processing runs locally — zero cloud dependency");

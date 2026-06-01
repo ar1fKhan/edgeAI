@@ -26,15 +26,14 @@ bool GpioController::initialize() {
         return false;
     }
     write_value(0);  // ensure low initially
-    initialized_ = true;
-    LOG_INFO("GPIO", "GPIO pin " + std::to_string(pin_) + " initialized for reject output");
-    return true;
 #else
     LOG_INFO("GPIO", "GPIO hardware disabled — running in simulation mode (pin "
              + std::to_string(pin_) + ")");
-    initialized_ = true;
-    return true;
 #endif
+    pulse_thread_ = std::thread(&GpioController::pulse_worker, this);
+    initialized_ = true;
+    LOG_INFO("GPIO", "GPIO pin " + std::to_string(pin_) + " initialized for reject output");
+    return true;
 }
 
 void GpioController::trigger_reject() {
@@ -43,12 +42,11 @@ void GpioController::trigger_reject() {
     ++reject_count_;
     LOG_INFO("GPIO", "Reject pulse triggered (count: " + std::to_string(reject_count_.load()) + ")");
 
-    // Fire-and-forget pulse in detached thread to avoid blocking inference
-    std::thread([this]() {
-        set_high();
-        std::this_thread::sleep_for(std::chrono::milliseconds(pulse_ms_));
-        set_low();
-    }).detach();
+    {
+        std::lock_guard<std::mutex> lock(cv_mutex_);
+        pulse_pending_ = true;
+    }
+    pulse_cv_.notify_one();
 }
 
 void GpioController::set_high() {
@@ -68,10 +66,16 @@ void GpioController::set_low() {
 }
 
 void GpioController::cleanup() {
+    {
+        std::lock_guard<std::mutex> lock(cv_mutex_);
+        stop_flag_ = true;
+    }
+    pulse_cv_.notify_one();
+    if (pulse_thread_.joinable()) pulse_thread_.join();
+
 #ifdef ENABLE_GPIO_HW
     if (initialized_) {
         write_value(0);
-        // Unexport pin
         std::ofstream unexport("/sys/class/gpio/unexport");
         if (unexport.is_open()) {
             unexport << pin_;
@@ -79,6 +83,20 @@ void GpioController::cleanup() {
     }
 #endif
     initialized_ = false;
+}
+
+void GpioController::pulse_worker() {
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(cv_mutex_);
+            pulse_cv_.wait(lock, [this] { return pulse_pending_ || stop_flag_; });
+            if (stop_flag_) break;
+            pulse_pending_ = false;
+        }
+        set_high();
+        std::this_thread::sleep_for(std::chrono::milliseconds(pulse_ms_));
+        set_low();
+    }
 }
 
 bool GpioController::export_pin() {

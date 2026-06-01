@@ -11,6 +11,7 @@
 #include "edgeai/common/timer.h"
 
 #include <algorithm>
+#include <fstream>
 #include <numeric>
 #include <cmath>
 
@@ -21,8 +22,35 @@ OnnxEngine::OnnxEngine(const InferenceConfig& config)
 
 OnnxEngine::~OnnxEngine() = default;
 
+bool OnnxEngine::verify_model_file(const std::string& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        LOG_ERROR("Inference", "Model file not found or not readable: " + path);
+        return false;
+    }
+    auto size = static_cast<int64_t>(file.tellg());
+    if (size < 1024) {
+        LOG_ERROR("Inference", "Model file too small (" + std::to_string(size)
+                  + " bytes) — expected a valid ONNX file: " + path);
+        return false;
+    }
+    // ONNX files are protobuf-encoded; first byte is field tag 0x08 (ir_version, varint)
+    file.seekg(0);
+    uint8_t magic = 0;
+    file.read(reinterpret_cast<char*>(&magic), 1);
+    if (magic != 0x08) {
+        LOG_ERROR("Inference", "File does not start with ONNX protobuf magic (got 0x"
+                  + std::to_string(magic) + "): " + path);
+        return false;
+    }
+    LOG_INFO("Inference", "Model file verified: " + path
+             + " (" + std::to_string(size / 1024) + " KB)");
+    return true;
+}
+
 bool OnnxEngine::load_model() {
 #ifdef HAS_ONNXRUNTIME
+    if (!verify_model_file(config_.model_path)) return false;
     try {
         ScopedTimer timer("Model Load");
 

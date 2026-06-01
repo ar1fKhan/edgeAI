@@ -92,11 +92,12 @@ bool DefectDatabase::insert_result(const InspectionResult& result) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) return false;
 
+    if (!execute("BEGIN;")) return false;
+
     std::string ts = current_timestamp();
     double inf_ms = std::chrono::duration<double, std::milli>(result.inference_time).count();
     double tot_ms = std::chrono::duration<double, std::milli>(result.total_time).count();
 
-    // Insert inspection record using prepared statement (prevents SQL injection)
     const char* ins_sql = "INSERT INTO inspections "
         "(frame_id, timestamp, verdict, num_detections, inference_ms, total_ms, image_path) "
         "VALUES (?, ?, ?, ?, ?, ?, ?);";
@@ -104,6 +105,7 @@ bool DefectDatabase::insert_result(const InspectionResult& result) {
     sqlite3_stmt* ins_stmt = nullptr;
     if (sqlite3_prepare_v2(db_, ins_sql, -1, &ins_stmt, nullptr) != SQLITE_OK) {
         LOG_ERROR("Database", "Failed to prepare insert: " + std::string(sqlite3_errmsg(db_)));
+        execute("ROLLBACK;");
         return false;
     }
 
@@ -120,12 +122,12 @@ bool DefectDatabase::insert_result(const InspectionResult& result) {
     sqlite3_finalize(ins_stmt);
     if (!ok) {
         LOG_ERROR("Database", "Failed to insert inspection: " + std::string(sqlite3_errmsg(db_)));
+        execute("ROLLBACK;");
         return false;
     }
 
     int64_t inspection_id = sqlite3_last_insert_rowid(db_);
 
-    // Insert detection records using prepared statement
     if (!result.detections.empty()) {
         const char* det_sql = "INSERT INTO detections "
             "(inspection_id, defect_type, confidence, bbox_x, bbox_y, bbox_w, bbox_h) "
@@ -135,6 +137,7 @@ bool DefectDatabase::insert_result(const InspectionResult& result) {
         if (sqlite3_prepare_v2(db_, det_sql, -1, &det_stmt, nullptr) != SQLITE_OK) {
             LOG_ERROR("Database", "Failed to prepare detection insert: "
                       + std::string(sqlite3_errmsg(db_)));
+            execute("ROLLBACK;");
             return false;
         }
 
@@ -148,12 +151,19 @@ bool DefectDatabase::insert_result(const InspectionResult& result) {
             sqlite3_bind_double(det_stmt, 5, det.bbox.y);
             sqlite3_bind_double(det_stmt, 6, det.bbox.width);
             sqlite3_bind_double(det_stmt, 7, det.bbox.height);
-            sqlite3_step(det_stmt);
+            if (sqlite3_step(det_stmt) != SQLITE_DONE) {
+                LOG_ERROR("Database", "Failed to insert detection: "
+                          + std::string(sqlite3_errmsg(db_)));
+                sqlite3_finalize(det_stmt);
+                execute("ROLLBACK;");
+                return false;
+            }
         }
 
         sqlite3_finalize(det_stmt);
     }
 
+    execute("COMMIT;");
     return true;
 }
 

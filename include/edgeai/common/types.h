@@ -233,6 +233,7 @@ struct PipelineConfig {
     int             queue_capacity     = 32;
     std::string     defect_image_dir   = "data/defects";
     std::string     database_path      = "data/defects.db";
+    std::string     log_path           = "edgeai.log";
     bool            save_defect_images = true;
     bool            enable_display     = false;
     bool            enable_gpio        = false;
@@ -240,6 +241,7 @@ struct PipelineConfig {
     int             gpio_pulse_ms      = 200;
     int             max_defect_images  = 10000;   // 0 = unlimited
     int             max_db_records     = 100000;  // 0 = unlimited
+    int             inference_watchdog_timeout_ms = 10000;  // 0 = disabled
 };
 
 }  // namespace edgeai

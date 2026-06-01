@@ -38,18 +38,11 @@ std::vector<Detection> Postprocessor::process(
         float w  = row[2];
         float h  = row[3];
 
-        // Find best class and apply sigmoid normalization
+        // YOLOv8 class scores are already probabilities in [0, 1] — no sigmoid needed
         int best_class = 0;
         float best_conf = 0.0f;
         for (int c = 0; c < num_classes_; ++c) {
-            // Apply sigmoid to normalize raw logits to [0, 1]
-            float raw = row[4 + c];
-            float conf = 1.0f / (1.0f + std::exp(-raw));  // sigmoid(x)
-            
-            // Clamp to realistic range: cap at 0.99 to prevent 100% predictions
-            // (even well-trained models shouldn't have 100% confidence on arbitrary inputs)
-            conf = std::min(conf, 0.99f);
-            
+            float conf = row[4 + c];
             if (conf > best_conf) {
                 best_conf = conf;
                 best_class = c;

@@ -110,6 +110,10 @@ public:
             config.max_defect_images = safe_stoi(it->first, it->second, 10000, 0, 1000000);
         if (auto it = kv.find("pipeline.max_db_records"); it != kv.end())
             config.max_db_records = safe_stoi(it->first, it->second, 100000, 0, 10000000);
+        if (auto it = kv.find("pipeline.log_path"); it != kv.end())
+            config.log_path = it->second;
+        if (auto it = kv.find("pipeline.inference_watchdog_timeout_ms"); it != kv.end())
+            config.inference_watchdog_timeout_ms = safe_stoi(it->first, it->second, 10000, 0, 3600000);
 
         LOG_INFO("Config", "Configuration loaded from: " + filepath);
         return config;

@@ -10,6 +10,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <thread>
 #include "edgeai/io/ireject_controller.h"
@@ -54,6 +56,13 @@ private:
     bool                   initialized_ = false;
     std::atomic<uint64_t>  reject_count_{0};
 
+    std::thread             pulse_thread_;
+    std::mutex              cv_mutex_;
+    std::condition_variable pulse_cv_;
+    bool                    pulse_pending_{false};
+    bool                    stop_flag_{false};
+
+    void pulse_worker();
     bool export_pin();
     bool set_direction(const std::string& direction);
     bool write_value(int value);

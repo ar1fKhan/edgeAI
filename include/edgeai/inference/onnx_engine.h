@@ -67,6 +67,7 @@ private:
 #endif
 
     void setup_execution_provider();
+    static bool verify_model_file(const std::string& path);
 };
 
 }  // namespace edgeai

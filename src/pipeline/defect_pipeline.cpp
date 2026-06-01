@@ -86,11 +86,15 @@ void DefectPipeline::start() {
     }
 
     running_ = true;
+    last_inference_ms_.store(0);
     frame_queue_.reset();
 
     LOG_INFO("Pipeline", "Starting pipeline threads...");
-    capture_thread_ = std::thread(&DefectPipeline::capture_loop, this);
+    capture_thread_  = std::thread(&DefectPipeline::capture_loop,  this);
     inference_thread_ = std::thread(&DefectPipeline::inference_loop, this);
+    if (config_.enable_display)
+        display_thread_ = std::thread(&DefectPipeline::display_loop, this);
+    watchdog_thread_ = std::thread(&DefectPipeline::watchdog_loop, this);
 
     LOG_INFO("Pipeline", "Pipeline started — capture and inference threads running");
 }
@@ -98,9 +102,12 @@ void DefectPipeline::start() {
 void DefectPipeline::stop() {
     bool was_running = running_.exchange(false);
     frame_queue_.stop();
+    display_cv_.notify_all();
 
-    if (capture_thread_.joinable()) capture_thread_.join();
+    if (capture_thread_.joinable())   capture_thread_.join();
     if (inference_thread_.joinable()) inference_thread_.join();
+    if (display_thread_.joinable())   display_thread_.join();
+    if (watchdog_thread_.joinable())  watchdog_thread_.join();
 
     if (!was_running) return;  // already stopped — skip logging/cleanup
 
@@ -237,11 +244,19 @@ void DefectPipeline::inference_loop() {
             // Handle result
             handle_result(result, frame.image);
 
-            // Update stats (thread-safe)
+            // Update stats + copy callback under one lock, invoke callback outside
+            ResultCallback cb;
             {
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 stats_.update(result);
+                cb = result_callback_;
             }
+
+            // Update watchdog heartbeat
+            last_inference_ms_.store(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count()
+            );
 
             // Periodic disk pruning (images + DB)
             if (++frames_since_prune >= prune_interval) {
@@ -249,16 +264,15 @@ void DefectPipeline::inference_loop() {
                 prune_if_needed();
             }
 
-            // Display if enabled
+            // Push annotated frame to display thread (never blocks inference)
             if (config_.enable_display) {
-                cv::Mat display = frame.image.clone();
-                draw_detections(display, result.detections);
+                cv::Mat annotated = frame.image.clone();
+                draw_detections(annotated, result.detections);
 
-                // Add stats overlay
                 std::string status = verdict_to_string(result.verdict);
                 auto color = (result.verdict == Verdict::Pass)
                     ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
-                cv::putText(display, status, cv::Point(10, 40),
+                cv::putText(annotated, status, cv::Point(10, 40),
                             cv::FONT_HERSHEY_SIMPLEX, 1.2, color, 3);
 
                 double fps;
@@ -266,23 +280,19 @@ void DefectPipeline::inference_loop() {
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     fps = stats_.throughput_fps;
                 }
-                std::string fps_text = "FPS: " + std::to_string(static_cast<int>(fps));
-                cv::putText(display, fps_text, cv::Point(10, 80),
-                            cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 255, 255), 2);
+                cv::putText(annotated, "FPS: " + std::to_string(static_cast<int>(fps)),
+                            cv::Point(10, 80), cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                            cv::Scalar(255, 255, 255), 2);
 
-                cv::imshow("EdgeAI Inspector", display);
-                if (cv::waitKey(1) == 27) {  // ESC to quit
-                    running_ = false;
+                {
+                    std::lock_guard<std::mutex> lock(display_mutex_);
+                    display_frame_ = std::move(annotated);
                 }
+                display_cv_.notify_one();
             }
 
-            // Invoke callback
-            {
-                std::lock_guard<std::mutex> lock(stats_mutex_);
-                if (result_callback_) {
-                    result_callback_(result);
-                }
-            }
+            // Invoke callback outside any lock
+            if (cb) cb(result);
         } catch (const std::exception& e) {
             LOG_ERROR("Pipeline", "Inference thread exception: " + std::string(e.what()));
         } catch (...) {
@@ -360,6 +370,43 @@ void DefectPipeline::draw_detections(cv::Mat& image,
         cv::putText(image, label,
             cv::Point(rect.x, rect.y - 4),
             cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1);
+    }
+}
+
+void DefectPipeline::display_loop() {
+    cv::namedWindow("EdgeAI Inspector", cv::WINDOW_AUTOSIZE);
+    while (running_.load()) {
+        std::unique_lock<std::mutex> lock(display_mutex_);
+        display_cv_.wait_for(lock, std::chrono::milliseconds(50),
+                             [this] { return display_frame_.has_value() || !running_.load(); });
+        if (!display_frame_.has_value()) continue;
+        cv::Mat frame = std::move(*display_frame_);
+        display_frame_.reset();
+        lock.unlock();
+
+        cv::imshow("EdgeAI Inspector", frame);
+        if (cv::waitKey(1) == 27) {  // ESC to quit
+            running_ = false;
+        }
+    }
+    cv::destroyAllWindows();
+}
+
+void DefectPipeline::watchdog_loop() {
+    while (running_.load()) {
+        for (int i = 0; i < 10 && running_.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        if (!running_.load() || config_.inference_watchdog_timeout_ms <= 0) continue;
+
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto last_ms = last_inference_ms_.load();
+
+        if (last_ms > 0 && (now_ms - last_ms) > config_.inference_watchdog_timeout_ms) {
+            LOG_WARN("Watchdog", "Inference thread stalled — no frame processed in "
+                     + std::to_string(now_ms - last_ms) + " ms");
+        }
     }
 }
 
