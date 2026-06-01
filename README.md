@@ -165,60 +165,60 @@ DefectPipeline pipeline(
 
 ## Threading Model
 
-The pipeline uses a **2-thread producer-consumer** architecture with explicit ownership semantics:
+The pipeline uses a **4-thread** architecture with explicit ownership semantics:
 
 ```
-Thread 1 (capture_thread_)         Thread 2 (inference_thread_)
-──────────────────────────         ──────────────────────────────
-┌──────────────┐                   ┌──────────────────────────┐
-│ ICamera      │                   │ Preprocessor             │
-│  .capture()  │──── FrameQueue ──▶│  .preprocess()           │
-│              │    (bounded SPSC) │                          │
-└──────────────┘                   │ IInferenceEngine         │
-                                   │  .infer()                │
-Owns: camera_                      │                          │
-Writes: frame_queue_               │ Postprocessor            │
-                                   │  .process() + .apply_nms()│
-                                   │                          │
-                                   │ IDecisionEngine          │
-                                   │  .decide()               │
-                                   │                          │
-                                   │ IDefectStore             │
-                                   │  .log_result()           │
-                                   │                          │
-                                   │ IRejectController        │
-                                   │  .trigger() (if reject)  │
-                                   └──────────────────────────┘
-
-                                   Owns: preprocessor_, engine_,
-                                         postprocessor_, decision_,
-                                         store_, rejector_
-                                   Reads: frame_queue_
+Thread 1 (capture_thread_)
+──────────────────────────
+┌──────────────┐
+│ ICamera      │──── FrameQueue (bounded SPSC) ──┐
+└──────────────┘                                 │
+                                                 ▼
+Thread 2 (inference_thread_)              Thread 3 (display_thread_)
+──────────────────────────────            ──────────────────────────
+┌──────────────────────────┐              ┌──────────────────────┐
+│ Preprocessor             │              │ Waits on display_cv_ │
+│ IInferenceEngine         │─── display ─▶│ cv::imshow / waitKey │
+│ Postprocessor (NMS)      │    slot      │ Owns the GUI window  │
+│ IDecisionEngine          │              └──────────────────────┘
+│ IDefectStore             │
+│ IRejectController        │  Thread 4 (watchdog_thread_)
+└──────────────────────────┘  ──────────────────────────
+        │ updates              ┌──────────────────────────┐
+        └─── last_inference ──▶│ Checks heartbeat every 1s│
+             _ms_ (atomic)     │ Warns if stalled > N ms  │
+                               └──────────────────────────┘
 ```
+
+**Display slot** — the inference thread pushes the latest annotated `cv::Mat` to a mutex-protected `std::optional<cv::Mat>` and signals `display_cv_`. The display thread owns `cv::imshow` and `cv::waitKey`, keeping OpenCV's highgui off the inference hot path.
+
+**GPIO pulse worker** — `GpioController` runs a fifth thread (`pulse_worker`) that blocks on a condition variable. `trigger_reject()` signals it rather than spawning a detached thread per reject, eliminating use-after-free on shutdown.
 
 ### Thread Ownership Rules
 
 | Resource | Owner Thread | Access Pattern |
 |----------|-------------|----------------|
-| `camera_` | Capture thread | Exclusive write |
+| `camera_` | Capture thread | Exclusive |
 | `frame_queue_` | Shared | SPSC: capture writes, inference reads |
-| `preprocessor_` | Inference thread | Exclusive |
-| `engine_` | Inference thread | Exclusive |
-| `postprocessor_` | Inference thread | Exclusive |
-| `decision_` | Inference thread | Exclusive |
-| `store_` | Inference thread | Exclusive |
-| `rejector_` | Inference thread | Exclusive |
-| `running_` | Shared | `std::atomic<bool>` — read by both, set by `stop()` |
+| `preprocessor_`, `engine_`, `postprocessor_`, `decision_`, `store_`, `rejector_` | Inference thread | Exclusive |
+| `display_frame_` | Shared | Inference writes, display reads — guarded by `display_mutex_` |
+| `last_inference_ms_` | Shared | `std::atomic<int64_t>` — inference writes, watchdog reads |
+| `stats_` | Shared | Guarded by `stats_mutex_`; callback copied under lock, invoked outside |
+| `running_` | Shared | `std::atomic<bool>` — lock-free shutdown signal |
 
 ### Synchronization
 
-- **FrameQueue**: bounded single-producer/single-consumer queue with `std::mutex` + `std::condition_variable`. Back-pressure: capture blocks when queue is full (avoids unbounded memory growth).
-- **`running_`**: `std::atomic<bool>` — enables lock-free shutdown signaling across threads.
-- No other shared mutable state exists between threads.
+| Primitive | Purpose |
+|-----------|---------|
+| `FrameQueue` (`mutex` + `cv`) | Bounded SPSC between capture and inference; back-pressure drops frames when full |
+| `display_mutex_` + `display_cv_` | Latest-frame slot between inference and display thread |
+| `stats_mutex_` | Guards `PipelineStats` and the result callback pointer |
+| `last_inference_ms_` (`atomic<int64_t>`) | Lock-free watchdog heartbeat |
+| `running_` (`atomic<bool>`) | Lock-free shutdown across all threads |
 
-### Future: 4-Stage Pipeline (planned)
+### Future: Split Preprocess + Inference
 
-For higher throughput, the architecture supports splitting into 4 threads:
+For higher throughput, preprocess and infer can be split onto separate threads:
 
 ```
 Camera → [Queue] → Preprocess → [Queue] → Inference → [Queue] → Decision + Store + IO
@@ -286,22 +286,31 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-This produces 9 module libraries + 2 executables:
+This produces 9 module libraries + 3 tools + 7 test binaries:
 
 ```
 build/
-├── libedgeai_common.a
-├── libedgeai_camera.a
-├── libedgeai_preprocessing.a
-├── libedgeai_inference.a
-├── libedgeai_postprocessing.a
-├── libedgeai_decision.a
-├── libedgeai_storage.a
-├── libedgeai_io.a
-├── libedgeai_pipeline.a
+├── lib/
+│   ├── libedgeai_common.a
+│   ├── libedgeai_camera.a
+│   ├── libedgeai_preprocessing.a
+│   ├── libedgeai_inference.a
+│   ├── libedgeai_postprocessing.a
+│   ├── libedgeai_decision.a
+│   ├── libedgeai_storage.a
+│   ├── libedgeai_io.a
+│   └── libedgeai_pipeline.a
 └── bin/
     ├── edge_inspector          # Main application
-    └── benchmark_inference     # Latency profiler
+    ├── benchmark_inference     # Latency profiler
+    ├── capture_images          # Camera capture tool
+    ├── test_types
+    ├── test_preprocessing
+    ├── test_postprocessing
+    ├── test_decision
+    ├── test_database
+    ├── test_frame_queue
+    └── test_integration        # Full pipeline GMock tests
 ```
 
 ### Build Options
@@ -320,16 +329,21 @@ build/
 cd build && ctest --output-on-failure
 ```
 
-Tests link only the module they exercise:
+**68 tests across 7 suites — all passing.**
 
-| Test | Links Against | What It Tests |
-|------|--------------|---------------|
-| `test_types` | `edgeai_common` | Core types, enums, config structs |
-| `test_preprocessing` | `edgeai_preprocessing` | Letterbox, normalize, tensor conversion |
-| `test_postprocessing` | `edgeai_postprocessing` | NMS, confidence filtering, coordinate mapping |
-| `test_decision` | `edgeai_decision` | Verdict determination (Pass/Reject/Review) |
-| `test_database` | `edgeai_storage` | SQLite defect logging |
-| `test_frame_queue` | `edgeai_common` | Bounded SPSC queue |
+Unit tests link only the module they exercise. The integration test uses GMock to exercise the full pipeline end-to-end without hardware:
+
+| Test binary | Tests | What It Covers |
+|---|---|---|
+| `test_types` | 11 | Core types, enums, config structs, IoU, stats |
+| `test_preprocessing` | 6 | Letterbox, normalize, HWC→CHW tensor conversion |
+| `test_postprocessing` | 5 | NMS, confidence filtering, coordinate mapping |
+| `test_decision` | 9 | Verdict logic (Pass/Reject/Review), threshold edge cases |
+| `test_database` | 4 | SQLite insert, retrieve, defect distribution, defect rate |
+| `test_frame_queue` | 8 | Bounded SPSC queue: capacity, FIFO order, producer-consumer |
+| `test_integration` | 25 | Full pipeline with GMock: single-frame, threaded, edge cases, strict call-sequence, cross-module data chain |
+
+The integration test (`tests/mocks/`) provides GMock implementations of all 5 interfaces so the full pipeline can be tested without a camera, model, database, or GPIO hardware.
 
 ### Setup Python Environment
 
@@ -349,14 +363,71 @@ python python/train/train_model.py --data configs/dataset.yaml --epochs 100
 ### Run Edge Inference
 
 ```bash
+# Live camera
 ./build/bin/edge_inspector --model models/defect_detector.onnx --camera 0
+
+# Video file (debug)
+./build/bin/edge_inspector --model models/defect_detector.onnx --video sample.mp4 --loop
+
+# Single image
+./build/bin/edge_inspector --model models/defect_detector.onnx --image test_can.jpg
+
+# With display overlay and custom log path
+./build/bin/edge_inspector --model models/defect_detector.onnx --camera 0 \
+    --display --log /var/log/edgeai/inspector.log
 ```
+
+**CLI flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--model <path>` | `models/defect_detector.onnx` | ONNX model file |
+| `--camera <id>` | `0` | Camera device ID (0–255) |
+| `--video <path>` | — | Use video file instead of camera |
+| `--loop` | off | Loop video playback |
+| `--image <path>` | — | Single-image mode (process one frame and exit) |
+| `--log <path>` | `edgeai.log` | Log file path |
+| `--display` | off | Show live detection overlay window |
+| `--config <path>` | — | Config file (overrides defaults) |
+| `--verbose` / `-v` | off | Enable DEBUG log level |
 
 ### Run Dashboard
 
 ```bash
 python python/dashboard/app.py
 # Open http://localhost:5000
+```
+
+---
+
+## Runtime Reliability
+
+The following production-hardening measures are implemented in the current codebase:
+
+| Area | Implementation |
+|---|---|
+| **GPIO thread safety** | `GpioController` runs a persistent `pulse_worker` thread blocked on a condition variable. `trigger_reject()` signals it; `cleanup()` sets a stop flag and joins. No detached threads, no use-after-free on shutdown. |
+| **Database atomicity** | `insert_result()` wraps the inspection + detection inserts in `BEGIN`/`COMMIT`/`ROLLBACK`. A crash mid-write cannot leave orphaned inspection rows. |
+| **Callback deadlock prevention** | The result callback is copied under `stats_mutex_` and invoked outside it, so a user callback that acquires any lock cannot deadlock. |
+| **Display thread isolation** | `cv::imshow` and `cv::waitKey` run on a dedicated `display_loop()` thread. The inference thread only pushes to a latest-frame slot, keeping the inference hot path free of GUI blocking. |
+| **Model file validation** | `OnnxEngine::verify_model_file()` checks that the `.onnx` file exists, is > 1 KB, and starts with the ONNX protobuf magic byte (`0x08`) before handing it to ONNX Runtime. |
+| **CLI input safety** | `--camera` is parsed with `try/catch` and range-checked [0, 255]. Invalid input prints an error and shows help rather than throwing `std::invalid_argument`. |
+| **Configurable log path** | Log file is set via `--log <path>` CLI flag or `pipeline.log_path` in the config file. Defaults to `edgeai.log` in the working directory. |
+| **Inference watchdog** | `watchdog_loop()` checks `last_inference_ms_` (updated per frame) every second. If no frame is processed within `pipeline.inference_watchdog_timeout_ms` (default 10 000 ms), it logs a `WARN`. Set to `0` to disable. |
+
+### Configuration Keys (inference.cfg)
+
+```ini
+# --- existing keys ---
+inference.model_path         = models/defect_detector.onnx
+inference.conf_threshold     = 0.5
+inference.review_threshold   = 0.3
+pipeline.queue_capacity      = 32
+pipeline.max_db_records      = 100000
+
+# --- added keys ---
+pipeline.log_path                      = /var/log/edgeai/inspector.log
+pipeline.inference_watchdog_timeout_ms = 10000   # 0 = disabled
 ```
 
 ---
@@ -437,14 +508,21 @@ edgeAI/
 │   ├── inference.cfg               # Runtime configuration
 │   └── dataset.yaml                # Training dataset config
 │
-├── tests/                          # Per-module unit tests
+├── tests/                          # Per-module unit tests + integration tests
 │   ├── CMakeLists.txt
 │   ├── test_types.cpp
 │   ├── test_preprocessing.cpp
 │   ├── test_postprocessing.cpp     # NMS + decode tests
 │   ├── test_decision.cpp           # Verdict logic tests
 │   ├── test_database.cpp
-│   └── test_frame_queue.cpp
+│   ├── test_frame_queue.cpp
+│   ├── test_integration.cpp        # Full pipeline GMock (25 tests)
+│   └── mocks/                      # GMock implementations of all 5 interfaces
+│       ├── mock_camera.h
+│       ├── mock_inference_engine.h
+│       ├── mock_decision_engine.h
+│       ├── mock_defect_store.h
+│       └── mock_reject_controller.h
 │
 └── docs/
     └── BUSINESS_MODEL.md           # Market analysis & revenue model
