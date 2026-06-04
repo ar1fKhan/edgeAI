@@ -72,13 +72,12 @@ cv::Mat make_test_image(int width = 640, int height = 480) {
 
 /// Build a fake YOLO output tensor with 1 detection.
 /// Format: [cx, cy, w, h, class0_conf, class1_conf, ..., classN_conf]
-/// The pipeline calculates cols = 5 + num_classes, so we pad an extra
-/// trailing zero column to match.
+/// YOLOv8 has no objectness score: cols = 4 + num_classes.
 std::vector<float> make_yolo_output(int num_classes, int class_id,
                                      float confidence,
                                      float cx = 320.0f, float cy = 320.0f,
                                      float w = 100.0f, float h = 100.0f) {
-    int cols = 5 + num_classes;  // Match pipeline's col calculation
+    int cols = 4 + num_classes;
     std::vector<float> output(cols, 0.0f);
     output[0] = cx;
     output[1] = cy;
@@ -96,7 +95,7 @@ std::vector<float> make_multi_detection_output(
     const std::vector<std::pair<int, float>>& class_conf_pairs) {
 
     std::vector<float> output;
-    int cols = 5 + num_classes;  // Match pipeline's col calculation
+    int cols = 4 + num_classes;  // YOLOv8: no objectness score
     float offset = 0.0f;
     for (const auto& [class_id, conf] : class_conf_pairs) {
         std::vector<float> row(cols, 0.0f);
@@ -1007,7 +1006,7 @@ TEST_F(CrossModuleIntegration, FullDataChain) {
     auto raw_output = make_multi_detection_output(5, {{0, 0.85f}, {2, 0.75f}});
 
     // Step 3: Postprocess
-    int cols = 5 + 5;  // 5 + num_classes, matching pipeline formula
+    int cols = 4 + 5;  // 4 + num_classes (YOLOv8: no objectness score)
     int rows = static_cast<int>(raw_output.size()) / cols;
     auto detections = postprocessor.process(
         raw_output, rows, cols,

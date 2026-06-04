@@ -156,6 +156,20 @@ std::vector<float> OnnxEngine::infer(const std::vector<float>& input_tensor) {
             total_elements *= static_cast<size_t>(dim);
         }
 
+        // YOLOv8 ONNX export: [1, num_attrs, num_dets] (channels-first).
+        // Transpose to row-major [num_dets, num_attrs] so callers always
+        // receive consistent layout regardless of execution provider.
+        if (output_shape.size() == 3 && output_shape[1] < output_shape[2]) {
+            int64_t num_attrs = output_shape[1];
+            int64_t num_dets  = output_shape[2];
+            std::vector<float> transposed(static_cast<size_t>(num_attrs * num_dets));
+            for (int64_t d = 0; d < num_dets; ++d)
+                for (int64_t a = 0; a < num_attrs; ++a)
+                    transposed[static_cast<size_t>(d * num_attrs + a)] =
+                        output_data[static_cast<size_t>(a * num_dets + d)];
+            return transposed;
+        }
+
         return std::vector<float>(output_data, output_data + total_elements);
 
     } catch (const Ort::Exception& e) {

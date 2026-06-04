@@ -144,18 +144,12 @@ InspectionResult DefectPipeline::process_frame(const cv::Mat& image) {
     result.inference_time = inf_timer.elapsed();
 
     if (!raw_output.empty()) {
-        // YOLOv8 ONNX output: [1, 4+num_classes, num_dets] (channels-first)
-        // Transpose to [num_dets, 4+num_classes] (rows-first) for postprocessor
-        int num_attrs = 4 + config_.inference.num_classes;
-        int num_dets  = static_cast<int>(raw_output.size()) / num_attrs;
-
-        std::vector<float> transposed(raw_output.size());
-        for (int d = 0; d < num_dets; ++d)
-            for (int a = 0; a < num_attrs; ++a)
-                transposed[d * num_attrs + a] = raw_output[a * num_dets + d];
+        // OnnxEngine::infer() already returns row-major [num_dets, num_attrs]
+        int cols = 4 + config_.inference.num_classes;
+        int rows = static_cast<int>(raw_output.size()) / cols;
 
         auto detections = postprocessor_->process(
-            transposed, num_dets, num_attrs,
+            raw_output, rows, cols,
             prep.scale_x, prep.scale_y,
             prep.pad_x, prep.pad_y,
             prep.orig_w, prep.orig_h
@@ -230,18 +224,12 @@ void DefectPipeline::inference_loop() {
             result.inference_time = inference_time;
 
             if (!raw_output.empty()) {
-                // YOLOv8 ONNX output: [1, 4+num_classes, num_dets] (channels-first)
-                // Transpose to [num_dets, 4+num_classes] (rows-first) for postprocessor
-                int num_attrs = 4 + config_.inference.num_classes;
-                int num_dets  = static_cast<int>(raw_output.size()) / num_attrs;
-
-                std::vector<float> transposed(raw_output.size());
-                for (int d = 0; d < num_dets; ++d)
-                    for (int a = 0; a < num_attrs; ++a)
-                        transposed[d * num_attrs + a] = raw_output[a * num_dets + d];
+                // OnnxEngine::infer() already returns row-major [num_dets, num_attrs]
+                int cols = 4 + config_.inference.num_classes;
+                int rows = static_cast<int>(raw_output.size()) / cols;
 
                 auto detections = postprocessor_->process(
-                    transposed, num_dets, num_attrs,
+                    raw_output, rows, cols,
                     prep.scale_x, prep.scale_y,
                     prep.pad_x, prep.pad_y,
                     prep.orig_w, prep.orig_h
