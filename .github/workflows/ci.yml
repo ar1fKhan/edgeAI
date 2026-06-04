@@ -36,8 +36,8 @@ jobs:
 
       - name: Verify stub mode active
         run: |
-          grep "USE_ONNX_STUB:BOOL=ON\|USE_ONNX_STUB=ON" build/CMakeCache.txt \
-            || (echo "Expected stub mode but ONNX Runtime was found" && exit 1)
+          grep "ONNXRUNTIME_LIB:FILEPATH=ONNXRUNTIME_LIB-NOTFOUND" build/CMakeCache.txt \
+            || (echo "ONNX Runtime was unexpectedly found — expected stub mode" && exit 1)
 
       - name: Build
         run: cmake --build build -- -j$(nproc)
@@ -56,7 +56,7 @@ jobs:
   # Verifies the project compiles and all tests pass with the actual ORT SDK.
   # ORT tarball is cached so subsequent runs skip the download.
   build-test-ort:
-    name: Build & Test (ONNX Runtime ${{ env.ORT_VERSION }})
+    name: Build & Test (ONNX Runtime 1.26.0)
     runs-on: ubuntu-24.04
 
     steps:
