@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ORT_VERSION: "1.26.0"
+
+jobs:
+  # ── Job 1: Fast build + full test suite (stub inference engine) ──────────
+  # Runs on every push and PR. No ORT dependency — all 68 tests pass in stub
+  # mode because tests inject mocks via interfaces, not the real OnnxEngine.
+  build-test:
+    name: Build & Test (stub)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential \
+            libopencv-dev libsqlite3-dev \
+            libgtest-dev googletest
+
+      - name: Configure (Debug)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENABLE_TESTS=ON
+
+      - name: Verify stub mode active
+        run: |
+          grep "USE_ONNX_STUB:BOOL=ON\|USE_ONNX_STUB=ON" build/CMakeCache.txt \
+            || (echo "Expected stub mode but ONNX Runtime was found" && exit 1)
+
+      - name: Build
+        run: cmake --build build -- -j$(nproc)
+
+      - name: Test
+        run: cd build && ctest --output-on-failure
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-stub
+          path: build/Testing/Temporary/LastTest.log
+
+  # ── Job 2: Full build with real ONNX Runtime ────────────────────────────
+  # Verifies the project compiles and all tests pass with the actual ORT SDK.
+  # ORT tarball is cached so subsequent runs skip the download.
+  build-test-ort:
+    name: Build & Test (ONNX Runtime ${{ env.ORT_VERSION }})
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential \
+            libopencv-dev libsqlite3-dev \
+            libgtest-dev googletest
+
+      - name: Cache ONNX Runtime tarball
+        id: cache-ort
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ort-cache
+          key: onnxruntime-linux-x64-${{ env.ORT_VERSION }}
+
+      - name: Download ONNX Runtime
+        if: steps.cache-ort.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/ort-cache
+          wget -q -O /tmp/ort-cache/ort.tgz \
+            https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz
+
+      - name: Install ONNX Runtime to /opt/onnxruntime
+        run: |
+          cd /tmp/ort-cache
+          tar xzf ort.tgz
+          sudo mkdir -p /opt/onnxruntime
+          sudo cp -r onnxruntime-linux-x64-${ORT_VERSION}/include /opt/onnxruntime/
+          sudo cp -r onnxruntime-linux-x64-${ORT_VERSION}/lib     /opt/onnxruntime/
+          sudo ldconfig /opt/onnxruntime/lib
+
+      - name: Configure (Debug + real ORT)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENABLE_TESTS=ON
+
+      - name: Verify ONNX Runtime found
+        run: |
+          grep "ONNXRUNTIME_LIB:FILEPATH=" build/CMakeCache.txt | grep -v "NOTFOUND" \
+            || (echo "ONNX Runtime not found by CMake" && cat build/CMakeCache.txt | grep ORT && exit 1)
+
+      - name: Build
+        run: cmake --build build -- -j$(nproc)
+
+      - name: Test
+        run: cd build && ctest --output-on-failure
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-ort
+          path: build/Testing/Temporary/LastTest.log

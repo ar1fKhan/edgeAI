@@ -1,5 +1,7 @@
 # EdgeAI Defect Detection System
 
+[![CI](https://github.com/ar1fKhan/edgeAI/actions/workflows/ci.yml/badge.svg)](https://github.com/ar1fKhan/edgeAI/actions/workflows/ci.yml)
+
 > **Domain-agnostic** real-time edge AI quality control platform.  
 > Modular architecture — swap camera, inference backend, decision logic, storage, or I/O without touching the pipeline.  
 > **Zero cloud dependency** — all inference runs locally on edge hardware.
