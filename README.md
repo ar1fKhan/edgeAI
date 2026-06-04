@@ -1,6 +1,9 @@
 # EdgeAI Defect Detection System
 
-[![CI](https://github.com/ar1fKhan/edgeAI/actions/workflows/ci.yml/badge.svg)](https://github.com/ar1fKhan/edgeAI/actions/workflows/ci.yml)
+[![C++ CI](https://github.com/ar1fKhan/edgeAI/actions/workflows/ci.yml/badge.svg)](https://github.com/ar1fKhan/edgeAI/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX-Runtime-orange.svg)](https://onnxruntime.ai/)
 
 > **Domain-agnostic** real-time edge AI quality control platform.  
 > Modular architecture — swap camera, inference backend, decision logic, storage, or I/O without touching the pipeline.  
